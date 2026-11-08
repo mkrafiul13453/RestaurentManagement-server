@@ -1,0 +1,24 @@
+---
+description: Server-side charges, webhooks, and idempotent payment updates
+globs: "src/**/*{payment,billing,webhook}*.js"
+alwaysApply: false
+---
+
+# Payment Integration
+
+- Charge the total stored on the order. Ignore amounts sent by the browser.
+- Only `cashier`, `manager`, or `admin` can capture, refund, or void a staff payment. A customer may start payment for their own payable order.
+- Persist a provider reference and an idempotency key. A repeated webhook must not capture twice.
+- Read the webhook with `express.raw()` on that route only. Verify the signature, then update the payment.
+- A success redirect in the browser never marks an order paid. Only a verified webhook or a verified server-side capture does.
+- Payment status belongs on the payment document (`pending`, `paid`, `failed`, `refunded`). Refunds restore stock only through the order service.
+
+```javascript
+export function paymentWebhook(req, res, next) {
+  const valid = verifySignature(req.body, req.get("x-signature"), process.env.PAYMENT_WEBHOOK_SECRET);
+  if (!valid) return next(new AppError("Invalid signature", 400));
+  next();
+}
+```
+
+- Do not log card data, raw signatures, or webhook secrets.

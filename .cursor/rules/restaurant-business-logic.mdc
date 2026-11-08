@@ -1,0 +1,32 @@
+---
+description: Order, kitchen, billing, inventory, and reservation rules
+globs: "src/{services,validators}/**/*.js"
+alwaysApply: false
+---
+
+# Restaurant Business Logic
+
+Put every rule below in services. Recalculate on the server even if the client sends totals.
+
+## Menu and tables
+
+- Categories and menu items are managed by `admin` and `manager`. A menu item belongs to one category.
+- A table is available, occupied, or reserved. Do not seat two active parties on one table.
+
+## Orders
+
+- Statuses: `pending`, `confirmed`, `preparing`, `ready`, `completed`, `cancelled`.
+- Allowed moves: `pending → confirmed | cancelled`, `confirmed → preparing | cancelled`, `preparing → ready`, `ready → completed`.
+- `completed` and `cancelled` are final. Kitchen may set only `preparing` and `ready`.
+- On confirm, reserve ingredient stock. On cancel, release the reservation. On complete, consume it. Never decrement twice.
+
+## Billing
+
+- Subtotal, tax, coupon, and total are computed here from stored prices. Reject a coupon that is expired, over its limit, or below its minimum.
+- A customer may review only their own `completed` order, once.
+- Create notifications from the service that changed the order, reservation, or payment.
+- Sales analytics aggregate stored orders in a service. Do not accept client-supplied report totals.
+
+## Reservations
+
+- Reject overlaps for the same table and time range. A reservation hold must match an existing table.

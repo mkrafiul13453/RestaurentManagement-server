@@ -1,0 +1,24 @@
+---
+description: Service-level tests for totals, order flow, and stock
+globs: "**/*.{test,spec}.js"
+alwaysApply: false
+---
+
+# Testing
+
+- Add tests when a feature task asks for them. Do not add a test runner before that.
+- Prefer Node's built-in test runner. Test services, not private controller details.
+- Cover order totals (tax, discount, coupon), legal status changes, reservation overlap, and stock reserve / release / consume.
+- Use a test database or in-memory doubles. Never use live payment keys or production `MONGODB_URI`.
+- Keep fixtures in JavaScript. Do not add TypeScript test files.
+
+```javascript
+import test from "node:test";
+import assert from "node:assert/strict";
+import { priceOrder } from "../src/services/billing.service.js";
+
+test("tax and coupon are applied on the server", () => {
+  const priced = priceOrder({ lines: [{ price: 1000, qty: 2 }], taxRate: 0.1, coupon: 500 });
+  assert.equal(priced.total, 1700);
+});
+```

@@ -1,0 +1,49 @@
+---
+description: Restora backend overview, stack, boundaries, and folder layout
+alwaysApply: true
+---
+
+# Restora – Backend Overview
+
+This repo is **Restora** (Restaurant Management System) **server only** (`RestaurentManagement-server`).
+Do not edit `RestaurentManagement-client`. Do not put React or Next.js code here.
+
+## Stack
+
+- Node.js, Express, JavaScript (ES6+) only, MongoDB, Mongoose, Better Auth
+- ESM (`"type": "module"`). Never add `.ts`, `.tsx`, or `tsconfig.json`
+- Add Helmet, rate limiting, Zod, Socket.IO, or Cloudinary only when a feature needs them
+- Do not install packages while only changing rules
+
+## Boundaries
+
+- Better Auth plus its MongoDB adapter owns identity, sessions, and credentials
+- Mongoose owns application data. Do not store passwords in Mongoose
+- Business rules, totals, and authorization run here. The UI is not a security boundary
+- REST prefix `/api/v1`. Envelope: `{ success, data, message, error }`
+- Work incrementally. Do not scaffold the whole app in one pass, and do not overwrite working code
+
+## Roles
+
+Backend source of truth: `admin`, `manager`, `waiter`, `chef`, `cashier`, `customer`.
+The client rules still say `admin`, `staff`, `kitchen`, `customer`. Do not invent a third list, and do not change the client from this repo.
+
+## Layout
+
+```text
+src/
+├── config/
+├── models/
+├── routes/
+├── controllers/
+├── services/
+├── middleware/
+├── validators/
+├── utils/
+├── sockets/
+├── auth/
+├── app.js
+└── server.js
+```
+
+Adapt to files that already exist. Create a folder only when the feature you are building needs it.

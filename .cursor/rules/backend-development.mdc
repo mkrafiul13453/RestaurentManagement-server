@@ -1,0 +1,28 @@
+---
+description: MVC layout, thin controllers, and centralized errors for Restora
+globs: "src/**/*.js"
+alwaysApply: false
+---
+
+# Backend Development
+
+- Routes wire middleware and controllers. Controllers read the request and send the envelope.
+- Services own business rules and database calls. Controllers do not calculate totals or check stock.
+- Validators run before the controller. Reject unknown fields.
+- One error middleware in `src/middleware/` handles `AppError` and unexpected errors.
+- Async handlers must forward failures with `next(error)` or an equivalent wrapper.
+
+```javascript
+export function asyncHandler(fn) {
+  return (req, res, next) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
+}
+
+export const createOrder = asyncHandler(async (req, res) => {
+  const order = await orderService.create(req.user, req.body);
+  res.status(201).json({ success: true, data: order, message: "Order created" });
+});
+```
+
+- Do not generate every module at once. Add a file when the current feature needs it.

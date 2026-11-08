@@ -1,0 +1,30 @@
+---
+description: JavaScript-only coding standards for the Restora Express server
+alwaysApply: true
+---
+
+# JavaScript Standards
+
+- Use JavaScript (ES6+) only. Never add TypeScript, `tsconfig.json`, or `.ts` / `.tsx` files.
+- Use ES modules (`import` / `export`). Better Auth does not support CommonJS.
+- Prefer named exports. Use `const` / `let`. Never `var`.
+- Use `async` / `await`. Handle errors explicitly; do not swallow them.
+- Keep functions small. Put reusable pure helpers in `src/utils/`.
+
+```javascript
+// ❌ BAD
+async function loadOrder(id) {
+  try {
+    return await Order.findById(id);
+  } catch (e) {}
+}
+
+// ✅ GOOD
+export async function loadOrder(id) {
+  const order = await Order.findById(id);
+  if (!order) {
+    throw new AppError("Order not found", 404);
+  }
+  return order;
+}
+```

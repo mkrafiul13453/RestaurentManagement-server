@@ -1,0 +1,36 @@
+---
+description: Better Auth sessions and server-side RBAC for Restora
+globs: "src/{auth,middleware}/**/*.js"
+alwaysApply: false
+---
+
+# Authentication and Authorization
+
+- Use Better Auth as the only auth system. Follow the official MongoDB adapter and Express guides.
+- Import `mongodbAdapter` from `@better-auth/mongo-adapter` and pass a native `MongoClient` database. Pass `client` when the deployment supports transactions.
+- Mount `toNodeHandler(auth)` before `express.json()`. This project uses Express 5 and mounts `/api/auth/*splat`.
+- Load the session with `auth.api.getSession({ headers: fromNodeHeaders(req.headers) })`.
+- Store `role` with Better Auth `additionalFields` and `input: false`. Allowed values: `admin`, `manager`, `waiter`, `chef`, `cashier`, `customer`. Default `customer`.
+- Keep client route groups aligned with the six roles in this rule. This server role list is the authorization source of truth; do not add another role list.
+- Ignore `role`, `isAdmin`, or permission flags from the body, query, or custom headers.
+
+```javascript
+export function requireRole(...roles) {
+  return (req, res, next) => {
+    if (!req.user) return next(new AppError("Unauthorized", 401));
+    if (!roles.includes(req.user.role)) return next(new AppError("Forbidden", 403));
+    next();
+  };
+}
+```
+
+## Who can do what
+
+- `admin`: full access
+- `manager`: menu, tables, reservations, inventory, coupons, reports, refunds
+- `waiter`: tables, orders, reservations
+- `chef`: kitchen status `preparing` and `ready`, inventory read
+- `cashier`: bills, payments, completing an order
+- `customer`: own orders, reservations, and reviews
+
+Every mutation checks the session on the server. Customers may read and change only their own records.

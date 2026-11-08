@@ -1,0 +1,22 @@
+---
+description: CORS, headers, rate limits, and secret handling for Restora
+alwaysApply: true
+---
+
+# Security
+
+- CORS: allow only `CLIENT_ORIGIN`, with `credentials: true`. Never use `origin: "*"` together with credentials.
+- Add Helmet and rate limits on auth routes and payment webhooks when those features are implemented.
+- Read secrets from the environment (`MONGODB_URI`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `CLIENT_ORIGIN`, payment secrets). Do not commit `.env` or log secret values.
+- Allowlist fields in queries and updates. Reject operator keys (`$gt`, `$where`, and similar) from user input.
+- Verify payment webhooks from the raw body and the provider signature before changing a payment.
+- Do not trust frontend role checks, hidden buttons, or client-computed prices.
+
+```javascript
+app.use(
+  cors({
+    origin: process.env.CLIENT_ORIGIN,
+    credentials: true,
+  })
+);
+```

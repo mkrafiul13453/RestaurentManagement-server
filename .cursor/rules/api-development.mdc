@@ -1,0 +1,30 @@
+---
+description: REST conventions and response envelope for the Restora API
+globs: "src/{routes,controllers,validators}/**/*.js"
+alwaysApply: false
+---
+
+# API Development
+
+- Prefix application routes with `/api/v1`. Leave Better Auth on `/api/auth/*`.
+- Envelope: `{ success, data, message, error }`. Use 201 for creates, 200 for reads and updates, 204 for empty deletes, 400 for validation, 401/403 for auth, 404 for missing records, 409 for conflicts.
+- Validate bodies, params, and queries with Zod before the controller. Strip unknown keys.
+- Paginate lists with `page` and `limit` (cap `limit`). Return `data` plus `meta`.
+
+## Resources
+
+Match the client: `/customers`, `/categories`, `/menu-items`, `/tables`, `/orders`, `/kitchen`, `/payments`, `/reservations`, `/inventory`, `/reviews`, `/notifications`, `/analytics`.
+Foods are `/menu-items`. Also use `/ingredients`, `/suppliers`, and `/coupons`.
+Do not rename these paths from the server side.
+
+```javascript
+router.post(
+  "/orders",
+  requireAuth,
+  requireRole("admin", "manager", "waiter", "customer"),
+  validate(createOrderSchema),
+  createOrder
+);
+```
+
+- Kitchen board updates and payment webhooks stay on their own routes. CRUD stays REST.

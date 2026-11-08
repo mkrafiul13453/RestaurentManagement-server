@@ -1,0 +1,26 @@
+---
+description: Authenticated Socket.IO events for kitchen and order boards
+globs: "src/sockets/**/*.js"
+alwaysApply: false
+---
+
+# Realtime Features
+
+- Use Socket.IO only for live kitchen and order boards. Create, update, and delete stay on REST.
+- Authenticate the handshake with the Better Auth session (cookies). Disconnect sockets with no session.
+- Join rooms from the server after checking the role. Do not trust a client-supplied room name.
+- Emit an event only after the matching database write succeeds.
+- Clients must not emit kitchen status, payment, refund, or inventory events.
+
+```javascript
+io.use(async (socket, next) => {
+  const session = await auth.api.getSession({
+    headers: fromNodeHeaders(socket.handshake.headers),
+  });
+  if (!session?.user) return next(new Error("Unauthorized"));
+  socket.user = session.user;
+  next();
+});
+```
+
+- Share the HTTP CORS origin. Do not leave the socket server open to every origin.

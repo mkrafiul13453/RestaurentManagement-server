@@ -1,0 +1,35 @@
+---
+description: Mongoose models and MongoDB rules for Restora application data
+globs: "src/{models,config}/**/*.js"
+alwaysApply: false
+---
+
+# Database Design
+
+- Connect Mongoose with `MONGODB_URI`. Better Auth uses the same URI through the official MongoDB adapter, not a second auth schema.
+- Do not model passwords, sessions, accounts, or verification tokens in Mongoose. Those collections belong to Better Auth.
+- Optional `profiles` documents may store restaurant metadata and must reference the Better Auth user id.
+
+## Application models
+
+`categories`, `menuItems` (foods), `tables`, `orders`, `reservations`, `payments`, `ingredients`, `suppliers`, `reviews`, `notifications`, `coupons`, and optional `profiles`.
+
+- Enable `timestamps`. Add indexes for foreign keys and frequent filters (`status`, `table`, `userId`).
+- Order status enum: `pending`, `confirmed`, `preparing`, `ready`, `completed`, `cancelled`.
+- Store money as integer minor units. Never use binary floats for prices, tax, or totals.
+- Assign fields explicitly. Never pass `req.body` into `create`, `find`, or `update`.
+
+```javascript
+const orderSchema = new Schema(
+  {
+    userId: { type: String, required: true, index: true },
+    status: {
+      type: String,
+      enum: ["pending", "confirmed", "preparing", "ready", "completed", "cancelled"],
+      default: "pending",
+    },
+    total: { type: Number, required: true, min: 0 },
+  },
+  { timestamps: true }
+);
+```
