@@ -41,9 +41,20 @@ function respond(response, data, message, status = 200, meta) {
   });
 }
 
-export function createReservationsRouter({ auth, Reservation, Table, runInTransaction }) {
+export function createReservationsRouter({
+  auth,
+  Reservation,
+  Table,
+  runInTransaction,
+  notificationService,
+}) {
   const router = Router();
-  const service = createReservationService({ Reservation, Table, runInTransaction });
+  const service = createReservationService({
+    Reservation,
+    Table,
+    runInTransaction,
+    notificationService,
+  });
   const roles = requireRole("admin", "manager", "waiter", "customer");
   router.use(requireAuth(auth), roles);
 

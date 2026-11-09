@@ -48,6 +48,7 @@ export function createOrdersRouter({
   runInTransaction,
   Payment,
   publishOrderUpdate = () => {},
+  notificationService,
 }) {
   const router = Router();
   const service = createOrderService({
@@ -58,6 +59,7 @@ export function createOrdersRouter({
     taxRoundingPolicy,
     runInTransaction,
     Payment,
+    notificationService,
   });
   const authenticate = requireAuth(auth);
   const orderRoles = ["admin", "manager", "waiter", "chef", "cashier", "customer"];

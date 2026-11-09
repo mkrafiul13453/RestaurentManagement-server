@@ -6,6 +6,7 @@ import { toNodeHandler } from "better-auth/node";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler.js";
 import { createApiRouter } from "./routes/index.js";
 import { AppError } from "./utils/app-error.js";
+import { createNotificationService } from "./services/notification-service.js";
 import {
   createStripeWebhookHandler,
   createStripeWebhookService,
@@ -35,6 +36,8 @@ export function createApp({
   Category,
   MenuItem,
   Order,
+  Review,
+  Notification,
   Reservation,
   Ingredient,
   InventoryAdjustment,
@@ -50,7 +53,27 @@ export function createApp({
   stripeWebhookSecret = "",
 }) {
   const app = express();
-  const handleAuth = authHandler ?? (auth ? toNodeHandler(auth) : undefined);
+  const notificationService = database && Notification
+    ? createNotificationService({
+      Notification,
+      userCollection: database.collection("user"),
+    })
+    : undefined;
+  const authRouteHandler = authHandler ?? (auth ? toNodeHandler(auth) : undefined);
+  const handleAuth = authRouteHandler
+    ? (request, response, next) => {
+      if (request.path === "/api/auth/admin" || request.path.startsWith("/api/auth/admin/")) {
+        response.status(404).json({
+          success: false,
+          data: null,
+          message: "Route not found",
+          error: { code: "NOT_FOUND" },
+        });
+        return;
+      }
+      authRouteHandler(request, response, next);
+    }
+    : undefined;
 
   app.disable("x-powered-by");
   app.use(helmet());
@@ -72,6 +95,7 @@ export function createApp({
       StripeEvent,
       stripe,
       clientOrigin,
+      notificationService,
     });
     app.post(
       "/api/v1/payments/webhook",
@@ -100,6 +124,8 @@ export function createApp({
       Category,
       MenuItem,
       Order,
+      Review,
+      Notification,
       Reservation,
       Ingredient,
       InventoryAdjustment,
@@ -113,6 +139,7 @@ export function createApp({
       StripeEvent,
       stripe,
       clientOrigin,
+      notificationService,
     }),
   );
   app.use("/api/v1", (_request, _response, next) => {

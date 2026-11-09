@@ -40,6 +40,7 @@ paymentSchema.index(
 );
 paymentSchema.index({ userId: 1, createdAt: -1 });
 paymentSchema.index({ orderId: 1, createdAt: -1 });
+paymentSchema.index({ createdAt: 1, status: 1 });
 paymentSchema.index({ stripePaymentIntentId: 1 });
 
 export const Payment =

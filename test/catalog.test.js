@@ -142,9 +142,25 @@ test("catalog APIs require staff writes and preserve referenced categories", asy
     });
 
     assert.equal((await categoryPost("waiter", { name: "Bowls" })).status, 403);
+    const guestCategories = await fetch(`${baseUrl}/api/v1/categories`);
+    assert.equal(guestCategories.status, 401);
+
     const createdCategory = await categoryPost("manager", { name: "Bowls" });
     assert.equal(createdCategory.status, 201);
     const category = (await createdCategory.json()).data.category;
+
+    const customerCategories = await fetch(`${baseUrl}/api/v1/categories?page=1&limit=10`, {
+      headers: { "x-test-role": "customer" },
+    });
+    const categoryBody = await customerCategories.json();
+    assert.equal(customerCategories.status, 200);
+    assert.deepEqual(categoryBody.data.categories.map(({ _id }) => _id), [category._id]);
+    assert.deepEqual(categoryBody.meta, { page: 1, limit: 10, total: 1, totalPages: 1 });
+    assert.equal((await categoryPost("customer", { name: "Forbidden" })).status, 403);
+    const waiterCategories = await fetch(`${baseUrl}/api/v1/categories`, {
+      headers: { "x-test-role": "waiter" },
+    });
+    assert.equal(waiterCategories.status, 403);
 
     const forbiddenItem = await fetch(`${baseUrl}/api/v1/menu-items`, {
       method: "POST",

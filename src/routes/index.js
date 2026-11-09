@@ -7,6 +7,10 @@ import { createKitchenRouter } from "./kitchen.js";
 import { createReservationsRouter } from "./reservations.js";
 import { createPaymentsRouter } from "./payments.js";
 import { createIngredientsRouter, createInventoryRouter } from "./inventory.js";
+import { createStaffRouter } from "./staff.js";
+import { createReviewsRouter } from "./reviews.js";
+import { createNotificationsRouter } from "./notifications.js";
+import { createAnalyticsRouter } from "./analytics.js";
 
 export function createApiRouter({
   auth,
@@ -15,6 +19,8 @@ export function createApiRouter({
   Category,
   MenuItem,
   Order,
+  Review,
+  Notification,
   Reservation,
   Ingredient,
   InventoryAdjustment,
@@ -28,6 +34,7 @@ export function createApiRouter({
   StripeEvent,
   stripe,
   clientOrigin = "",
+  notificationService,
 } = {}) {
   const apiRouter = Router();
 
@@ -51,6 +58,19 @@ export function createApiRouter({
 
   if (auth && database) {
     apiRouter.use("/customers", createCustomersRouter({ auth, database }));
+    apiRouter.use("/staff", createStaffRouter({ auth, database }));
+  }
+
+  if (auth && Review && Order) {
+    apiRouter.use("/reviews", createReviewsRouter({ auth, Review, Order }));
+  }
+
+  if (auth && Notification) {
+    apiRouter.use("/notifications", createNotificationsRouter({ auth, Notification }));
+  }
+
+  if (auth && Order && Payment) {
+    apiRouter.use("/analytics", createAnalyticsRouter({ auth, Order, Payment }));
   }
 
   if (auth && Table) {
@@ -60,7 +80,7 @@ export function createApiRouter({
   if (auth && Table && Reservation) {
     apiRouter.use(
       "/reservations",
-      createReservationsRouter({ auth, Reservation, Table, runInTransaction }),
+      createReservationsRouter({ auth, Reservation, Table, runInTransaction, notificationService }),
     );
   }
 
@@ -100,6 +120,7 @@ export function createApiRouter({
         taxRoundingPolicy,
         runInTransaction,
         Payment,
+        notificationService,
       }),
     );
   }
@@ -114,6 +135,7 @@ export function createApiRouter({
         StripeEvent,
         stripe,
         clientOrigin,
+        notificationService,
       }),
     );
   }

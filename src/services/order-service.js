@@ -91,6 +91,7 @@ export function createOrderService({
   taxRoundingPolicy = "half_up",
   runInTransaction = defaultRunInTransaction,
   Payment,
+  notificationService,
 }) {
   return {
     async create({ userId, items, tableId }) {
@@ -256,7 +257,16 @@ export function createOrderService({
           { $set: { status } },
           { new: true, runValidators: true },
         );
-        if (order) return serializeOrder(order);
+        if (order) {
+          await notificationService?.statusChanged({
+            resourceType: "order",
+            resourceId: order._id,
+            ownerId: order.userId,
+            previousStatus: expectedStatus,
+            newStatus: status,
+          });
+          return serializeOrder(order);
+        }
         return this.resolveStatusConflict(id);
       }
 
@@ -270,11 +280,20 @@ export function createOrderService({
           { $set: { status } },
           { new: true, runValidators: true },
         );
-        if (order) return serializeOrder(order);
+        if (order) {
+          await notificationService?.statusChanged({
+            resourceType: "order",
+            resourceId: order._id,
+            ownerId: order.userId,
+            previousStatus: expectedStatus,
+            newStatus: status,
+          });
+          return serializeOrder(order);
+        }
         return this.resolveStatusConflict(id);
       }
 
-      return runInTransaction(async (session) => {
+      const cancelledOrder = await runInTransaction(async (session) => {
         const order = await Order.findOneAndUpdate(
           { _id: id, status: expectedStatus },
           { $set: { status } },
@@ -295,6 +314,14 @@ export function createOrderService({
         }
         return serializeOrder(order);
       });
+      await notificationService?.statusChanged({
+        resourceType: "order",
+        resourceId: cancelledOrder._id,
+        ownerId: cancelledOrder.userId,
+        previousStatus: expectedStatus,
+        newStatus: status,
+      });
+      return cancelledOrder;
     },
 
     async resolveStatusConflict(id) {

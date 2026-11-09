@@ -65,7 +65,7 @@ export function createCategoriesRouter({ auth, Category, MenuItem }) {
   const service = createCategoryService({ Category, MenuItem });
   router.use(requireAuth(auth));
 
-  router.get("/", requireRole("admin", "manager"), validate(pageSchema, "query"), async (request, response) => {
+  router.get("/", requireRole("admin", "manager", "customer"), validate(pageSchema, "query"), async (request, response) => {
     const result = await service.list(request.validated.query);
     respond(response, { categories: result.categories }, "Categories retrieved", 200, result.meta);
   });

@@ -53,6 +53,7 @@ export function createReservationService({
   Reservation,
   Table,
   runInTransaction = defaultRunInTransaction,
+  notificationService,
 }) {
   async function serializeForAccess(reservation, role, userId) {
     if (role === "customer" && reservation.userId !== userId) {
@@ -218,7 +219,7 @@ export function createReservationService({
       if (role === "admin") {
         throw new AppError("Administrators have read-only reservation access", 403, "FORBIDDEN");
       }
-      return runInTransaction(async (session) => {
+      const cancelledReservation = await runInTransaction(async (session) => {
         const current = requireReservation(await Reservation.findById(id).session(session).lean());
         if (role === "customer" && current.userId !== userId) {
           throw new AppError("Reservation not found", 404, "NOT_FOUND");
@@ -234,6 +235,14 @@ export function createReservationService({
         ).lean();
         return serializeForAccess(requireReservation(reservation), role, userId);
       });
+      await notificationService?.statusChanged({
+        resourceType: "reservation",
+        resourceId: cancelledReservation._id,
+        ownerId: cancelledReservation.userId,
+        previousStatus: activeStatus,
+        newStatus: "cancelled",
+      });
+      return cancelledReservation;
     },
   };
 }

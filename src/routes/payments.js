@@ -36,9 +36,17 @@ export function createPaymentsRouter({
   StripeEvent,
   stripe,
   clientOrigin,
+  notificationService,
 }) {
   const router = Router();
-  const service = createPaymentService({ Order, Payment, StripeEvent, stripe, clientOrigin });
+  const service = createPaymentService({
+    Order,
+    Payment,
+    StripeEvent,
+    stripe,
+    clientOrigin,
+    notificationService,
+  });
   router.use(requireAuth(auth), requireRole(...allowedRoles));
 
   router.post(
@@ -130,6 +138,20 @@ export function createStripeWebhookHandler({ stripe, webhookSecret, service }) {
   };
 }
 
-export function createStripeWebhookService({ Order, Payment, StripeEvent, stripe, clientOrigin }) {
-  return createPaymentService({ Order, Payment, StripeEvent, stripe, clientOrigin });
+export function createStripeWebhookService({
+  Order,
+  Payment,
+  StripeEvent,
+  stripe,
+  clientOrigin,
+  notificationService,
+}) {
+  return createPaymentService({
+    Order,
+    Payment,
+    StripeEvent,
+    stripe,
+    clientOrigin,
+    notificationService,
+  });
 }

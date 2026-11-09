@@ -24,7 +24,7 @@ Put every rule below in services. Recalculate on the server even if the client s
 
 - Subtotal, tax, coupon, and total are computed here from stored prices. Reject a coupon that is expired, over its limit, or below its minimum.
 - A customer may review only their own `completed` order, once.
-- Create notifications from the service that changed the order, reservation, or payment.
+- Create notifications only after status transitions: order owner + active chef/waiter; reservation owner + active manager/waiter; payment owner + active cashier. Include only resource type/ID and previous/new status; do not notify admins for routine events or emit creation events.
 - Sales analytics aggregate stored orders in a service. Do not accept client-supplied report totals.
 
 ## Reservations

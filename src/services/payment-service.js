@@ -42,6 +42,7 @@ export function createPaymentService({
   StripeEvent,
   stripe,
   clientOrigin,
+  notificationService,
 }) {
   function requireStripe() {
     if (!stripe) {
@@ -99,14 +100,45 @@ export function createPaymentService({
             { $set: { paymentStatus: "paid" } },
             { runValidators: true },
           );
+          await notificationService?.statusChanged({
+            resourceType: "payment",
+            resourceId: payment._id,
+            ownerId: payment.userId,
+            previousStatus: "pending",
+            newStatus: "paid",
+          });
         }
         return;
       }
 
       if (event.type === "checkout.session.async_payment_failed") {
-        await updatePayment({ _id: payment._id, status: "pending" }, { status: "failed" });
+        const updated = await updatePayment(
+          { _id: payment._id, status: "pending" },
+          { status: "failed" },
+        );
+        if (updated || (await findPayment(payment._id))?.status === "failed") {
+          await notificationService?.statusChanged({
+            resourceType: "payment",
+            resourceId: payment._id,
+            ownerId: payment.userId,
+            previousStatus: "pending",
+            newStatus: "failed",
+          });
+        }
       } else if (event.type === "checkout.session.expired") {
-        await updatePayment({ _id: payment._id, status: "pending" }, { status: "cancelled" });
+        const updated = await updatePayment(
+          { _id: payment._id, status: "pending" },
+          { status: "cancelled" },
+        );
+        if (updated || (await findPayment(payment._id))?.status === "cancelled") {
+          await notificationService?.statusChanged({
+            resourceType: "payment",
+            resourceId: payment._id,
+            ownerId: payment.userId,
+            previousStatus: "pending",
+            newStatus: "cancelled",
+          });
+        }
       }
       return;
     }
@@ -132,6 +164,13 @@ export function createPaymentService({
           { $set: { paymentStatus: "refunded" } },
           { runValidators: true },
         );
+        await notificationService?.statusChanged({
+          resourceType: "payment",
+          resourceId: payment._id,
+          ownerId: payment.userId,
+          previousStatus: "paid",
+          newStatus: "refunded",
+        });
       }
     }
   }

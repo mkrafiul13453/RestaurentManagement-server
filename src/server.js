@@ -6,6 +6,8 @@ import { Table } from "./models/table.js";
 import { Category } from "./models/category.js";
 import { MenuItem } from "./models/menu-item.js";
 import { Order } from "./models/order.js";
+import { Review } from "./models/review.js";
+import { Notification } from "./models/notification.js";
 import { Reservation } from "./models/reservation.js";
 import mongoose from "mongoose";
 import { createServer } from "node:http";
@@ -19,8 +21,11 @@ async function start() {
   const resources = await connectDatabases(config);
   try {
     await Promise.all([
+      Order.init(),
       Payment.init(),
       StripeEvent.init(),
+      Review.init(),
+      Notification.init(),
       Ingredient.init(),
       InventoryAdjustment.init(),
     ]);
@@ -38,6 +43,8 @@ async function start() {
     Category,
     MenuItem,
     Order,
+    Review,
+    Notification,
     Reservation,
     Ingredient,
     InventoryAdjustment,
