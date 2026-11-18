@@ -6,6 +6,7 @@ import { Category } from "../src/models/category.js";
 import { MenuItem } from "../src/models/menu-item.js";
 
 const categoryId = "000000000000000000000001";
+const ingredientId = "000000000000000000000003";
 
 function createAuth() {
   return {
@@ -21,6 +22,10 @@ function createAuth() {
 function createCatalog() {
   const categories = new Map();
   const items = new Map();
+  const ingredients = new Map([[
+    ingredientId,
+    { _id: ingredientId, name: "Rice", unit: "kg", isActive: true },
+  ]]);
   let nextId = 2;
 
   function makeQuery(getResult) {
@@ -79,7 +84,18 @@ function createCatalog() {
       return { ...record };
     },
   };
-  return { Category: CategoryModel, MenuItem: MenuItemModel, categories, items };
+  const IngredientModel = {
+    countDocuments: async (filter) => filter._id.$in.filter((id) =>
+      ingredients.get(String(id))?.isActive === filter.isActive,
+    ).length,
+  };
+  return {
+    Category: CategoryModel,
+    MenuItem: MenuItemModel,
+    Ingredient: IngredientModel,
+    categories,
+    items,
+  };
 }
 
 function filterItems(items, filter) {
@@ -111,10 +127,12 @@ test("category and menu item schemas use indexed fields and integer minor-unit p
     name: "Rice bowl",
     categoryId,
     priceMinor: 125,
+    recipe: [{ ingredientId, quantity: 0.2 }],
   });
   await valid.validate();
   assert.equal(valid.isAvailable, true);
   assert.equal(valid.imageUrl, "");
+  assert.equal(valid.recipe[0].quantity, 0.2);
   assert.equal(MenuItem.schema.options.timestamps, true);
   assert.ok(MenuItem.schema.indexes().some(([keys]) => keys.categoryId === 1));
 
@@ -125,6 +143,41 @@ test("category and menu item schemas use indexed fields and integer minor-unit p
   });
   await assert.rejects(zeroPrice.validate());
   assert.ok(MenuItem.schema.path("imageUrl"));
+});
+
+test("menu item recipes accept active ingredients and reject unknown ingredients", async () => {
+  const catalog = createCatalog();
+  const app = createApp({
+    clientOrigin: "http://localhost:3000",
+    auth: createAuth(),
+    ...catalog,
+  });
+  await withServer(app, async (baseUrl) => {
+    const category = await catalog.Category.create({ name: "Bowls" });
+    const post = (recipe) => fetch(`${baseUrl}/api/v1/menu-items`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-test-role": "manager" },
+      body: JSON.stringify({
+        name: "Rice bowl",
+        categoryId: category._id,
+        priceMinor: 125,
+        recipe,
+      }),
+    });
+
+    const created = await post([{ ingredientId, quantity: 0.2 }]);
+    assert.equal(created.status, 201);
+    assert.deepEqual((await created.json()).data.menuItem.recipe, [
+      { ingredientId, quantity: 0.2 },
+    ]);
+
+    const unknown = await post([{
+      ingredientId: "000000000000000000000099",
+      quantity: 0.2,
+    }]);
+    assert.equal(unknown.status, 400);
+    assert.equal((await unknown.json()).error.code, "INVALID_RECIPE_INGREDIENT");
+  });
 });
 
 test("catalog APIs require staff writes and preserve referenced categories", async () => {

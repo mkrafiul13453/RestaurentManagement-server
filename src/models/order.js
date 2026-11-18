@@ -40,6 +40,25 @@ const orderLineSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const reservedIngredientSchema = new mongoose.Schema(
+  {
+    ingredientId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Ingredient",
+      required: true,
+    },
+    nameSnapshot: { type: String, required: true, trim: true, maxlength: 120 },
+    quantity: {
+      type: Number,
+      required: true,
+      min: Number.MIN_VALUE,
+      validate: Number.isFinite,
+    },
+    unit: { type: String, required: true, trim: true, maxlength: 32 },
+  },
+  { _id: false },
+);
+
 const orderSchema = new mongoose.Schema(
   {
     userId: { type: String, required: true, index: true },
@@ -58,6 +77,13 @@ const orderSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    inventoryReservationStatus: {
+      type: String,
+      enum: ["none", "reserved", "consumed", "released"],
+      default: "none",
+      required: true,
+    },
+    reservedIngredients: { type: [reservedIngredientSchema], default: [] },
     table: { type: mongoose.Schema.Types.ObjectId, ref: "Table", default: null },
     subtotalMinor: {
       type: Number,

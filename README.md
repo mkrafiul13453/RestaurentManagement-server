@@ -17,6 +17,10 @@ Stripe Checkout uses the server-calculated order total in USD cents. Stripe webh
 
 For an end-to-end Test Mode check, start the API and Stripe CLI listener, sign in as a customer, create an order, and choose **Pay with Stripe**. Use Stripe's test card `4242 4242 4242 4242`, any future expiration date, and any CVC. Confirm payment history and the order's payment status after the webhook arrives. A real Stripe Dashboard/CLI run requires your own rotated test keys; automated tests use Stripe doubles and do not perform live charges.
 
+## Recipe-based order stock
+
+Admin or manager users configure a recipe on each menu item as ingredient quantities per serving. Recipe quantities use the ingredient's inventory unit. Confirming an order checks available stock and reserves the calculated quantities in a transaction; cancelling a confirmed order releases the reservation; completing a ready order deducts the reserved quantities from on-hand stock. Missing recipes, inactive ingredients, and insufficient stock reject confirmation with a conflict response. Manual stock adjustments cannot reduce on-hand stock below existing reservations.
+
 ## Current foundation
 
 - Better Auth email/password authentication and MongoDB-backed sessions.

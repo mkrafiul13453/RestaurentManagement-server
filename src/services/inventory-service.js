@@ -36,6 +36,8 @@ function serializeIngredient(record) {
     name: value.name,
     unit: value.unit,
     quantity: value.quantity,
+    reservedQuantity: value.reservedQuantity ?? 0,
+    availableQuantity: value.quantity - (value.reservedQuantity ?? 0),
     minimumStock: value.minimumStock,
     isActive: value.isActive,
     createdAt: value.createdAt,
@@ -69,7 +71,14 @@ export function createInventoryService({
   async function list({ page, limit, search, lowStock }) {
     const filter = { isActive: true };
     if (search) filter.name = { $regex: escapeRegex(search), $options: "i" };
-    if (lowStock) filter.$expr = { $lte: ["$quantity", "$minimumStock"] };
+    if (lowStock) {
+      filter.$expr = {
+        $lte: [
+          { $subtract: ["$quantity", { $ifNull: ["$reservedQuantity", 0] }] },
+          "$minimumStock",
+        ],
+      };
+    }
 
     const [total, ingredients] = await Promise.all([
       Ingredient.countDocuments(filter),
@@ -97,6 +106,7 @@ export function createInventoryService({
         name,
         unit,
         quantity: 0,
+        reservedQuantity: 0,
         minimumStock,
         adjustmentCount: 0,
         isActive: true,
@@ -118,6 +128,7 @@ export function createInventoryService({
       if (unitChanged) {
         filter.quantity = 0;
         filter.adjustmentCount = 0;
+        filter.$expr = { $eq: [{ $ifNull: ["$reservedQuantity", 0] }, 0] };
       }
 
       const ingredient = await Ingredient.findOneAndUpdate(
@@ -144,7 +155,12 @@ export function createInventoryService({
 
     async archiveIngredient(id) {
       const ingredient = await Ingredient.findOneAndUpdate(
-        { _id: id, isActive: true, quantity: 0 },
+        {
+          _id: id,
+          isActive: true,
+          quantity: 0,
+          $expr: { $eq: [{ $ifNull: ["$reservedQuantity", 0] }, 0] },
+        },
         { $set: { isActive: false } },
         { new: true, runValidators: true },
       );
@@ -194,7 +210,12 @@ export function createInventoryService({
             isActive: true,
             $expr: {
               $and: [
-                { $gte: [quantityAfterExpression, 0] },
+                {
+                  $gte: [
+                    quantityAfterExpression,
+                    { $ifNull: ["$reservedQuantity", 0] },
+                  ],
+                },
                 { $lte: [quantityAfterExpression, maxQuantity] },
               ],
             },

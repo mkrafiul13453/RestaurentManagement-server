@@ -39,6 +39,10 @@ const menuFields = {
   imageUrl: z.string().trim().max(2048).refine((value) => value === "" || isImgBbUrl(value)).optional(),
   categoryId: z.string().regex(/^[\da-f]{24}$/i),
   priceMinor: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  recipe: z.array(z.object({
+    ingredientId: z.string().regex(/^[\da-f]{24}$/i),
+    quantity: z.number().finite().positive().max(Number.MAX_SAFE_INTEGER),
+  }).strict()).min(1).max(100).optional(),
 };
 const menuItemSchema = z.object(menuFields).strict();
 const updateMenuItemSchema = z.object({
@@ -100,9 +104,10 @@ export function createMenuItemsRouter({
   MenuItem,
   imgbbApiKey = "",
   imageUploadFetch = fetch,
+  Ingredient,
 }) {
   const router = Router();
-  const service = createMenuItemService({ Category, MenuItem });
+  const service = createMenuItemService({ Category, MenuItem, Ingredient });
   const imageService = createImageUploadService({ apiKey: imgbbApiKey, fetchImpl: imageUploadFetch });
   router.use(requireAuth(auth));
 

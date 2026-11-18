@@ -47,6 +47,7 @@ export function createOrdersRouter({
   taxRoundingPolicy,
   runInTransaction,
   Payment,
+  Ingredient,
   publishOrderUpdate = () => {},
   notificationService,
 }) {
@@ -59,6 +60,7 @@ export function createOrdersRouter({
     taxRoundingPolicy,
     runInTransaction,
     Payment,
+    Ingredient,
     notificationService,
   });
   const authenticate = requireAuth(auth);

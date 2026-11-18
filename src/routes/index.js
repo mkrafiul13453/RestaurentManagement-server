@@ -88,7 +88,7 @@ export function createApiRouter({
     apiRouter.use("/categories", createCategoriesRouter({ auth, Category, MenuItem }));
     apiRouter.use(
       "/menu-items",
-      createMenuItemsRouter({ auth, Category, MenuItem, imgbbApiKey, imageUploadFetch }),
+      createMenuItemsRouter({ auth, Category, MenuItem, Ingredient, imgbbApiKey, imageUploadFetch }),
     );
   }
 
@@ -120,6 +120,7 @@ export function createApiRouter({
         taxRoundingPolicy,
         runInTransaction,
         Payment,
+        Ingredient,
         notificationService,
       }),
     );

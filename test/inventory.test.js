@@ -46,11 +46,18 @@ function createInventoryModels(initial = []) {
     if (filter.name && !new RegExp(filter.name.$regex, filter.name.$options).test(record.name)) return false;
     if (filter.$expr) {
       if (filter.$expr.$lte) {
-        if (record.quantity > record.minimumStock) return false;
+        if (record.quantity - (record.reservedQuantity ?? 0) > record.minimumStock) return false;
+      } else if (filter.$expr.$eq) {
+        if ((record.reservedQuantity ?? 0) !== 0) return false;
       } else {
-        const delta = filter.$expr.$and[0].$gte[0].$add[1];
+        const [quantityCheck, maxCheck] = filter.$expr.$and;
+        const delta = quantityCheck.$gte[0].$add[1];
         const result = record.quantity + delta;
-        if (result < 0 || result > Number.MAX_SAFE_INTEGER) return false;
+        const minimumReserved = record.reservedQuantity ?? 0;
+        if (
+          result < minimumReserved ||
+          result > maxCheck.$lte[1]
+        ) return false;
       }
     }
     return true;
@@ -64,6 +71,7 @@ function createInventoryModels(initial = []) {
     async create(fields) {
       const record = {
         ...fields,
+        reservedQuantity: fields.reservedQuantity ?? 0,
         _id: String(nextIngredientId++).padStart(24, "0"),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -74,7 +82,7 @@ function createInventoryModels(initial = []) {
     async findOneAndUpdate(filter, update, options = {}) {
       const record = [...ingredients.values()].find((item) => matches(item, filter));
       if (!record) return null;
-      if (filter.$expr) {
+      if (filter.$expr && update.$inc) {
         assert.ok(options.session, "stock changes must run in a transaction");
         stockUpdateSessions.add(options.session);
       }
@@ -330,6 +338,35 @@ test("atomic stock adjustments never go negative under concurrency and are audit
     });
     assert.equal(invalid.status, 409);
     assert.equal(models.ingredients.get(ingredientId).quantity, 0);
+  });
+});
+
+test("manual adjustments cannot reduce on-hand stock below reserved quantities", async () => {
+  const models = createInventoryModels([{
+    _id: ingredientId,
+    name: "Rice",
+    unit: "kg",
+    quantity: 10,
+    reservedQuantity: 4,
+    minimumStock: 1,
+    adjustmentCount: 0,
+    isActive: true,
+  }]);
+  await withServer(createTestApp(models), async (baseUrl) => {
+    const adjust = (delta) => fetch(
+      `${baseUrl}/api/v1/inventory/${ingredientId}/adjustments`,
+      {
+        method: "POST",
+        headers: { "x-test-role": "manager", "content-type": "application/json" },
+        body: JSON.stringify({ delta, reason: "Kitchen count" }),
+      },
+    );
+
+    assert.equal((await adjust(-7)).status, 409);
+    assert.equal(models.ingredients.get(ingredientId).quantity, 10);
+    assert.equal((await adjust(-6)).status, 201);
+    assert.equal(models.ingredients.get(ingredientId).quantity, 4);
+    assert.equal(models.ingredients.get(ingredientId).reservedQuantity, 4);
   });
 });
 

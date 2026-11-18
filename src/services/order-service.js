@@ -10,12 +10,43 @@ const rolesByTransition = {
   "preparing:ready": ["chef"],
   "ready:completed": ["cashier"],
 };
-const stockGatedTransitions = new Set([
-  "pending:confirmed",
-  "confirmed:preparing",
-  "confirmed:cancelled",
-  "ready:completed",
-]);
+
+function inSession(query, session) {
+  return session && typeof query.session === "function" ? query.session(session) : query;
+}
+
+function getOrderIngredients(order, menuItems) {
+  const menuItemsById = new Map(menuItems.map((item) => [String(item._id), item]));
+  const requiredById = new Map();
+  for (const line of order.lines ?? []) {
+    const menuItem = menuItemsById.get(String(line.menuItemId));
+    if (!menuItem?.recipe?.length) {
+      throw new AppError(
+        `Add an ingredient recipe for ${line.nameSnapshot} before confirming this order`,
+        409,
+        "RECIPE_NOT_CONFIGURED",
+      );
+    }
+    for (const recipeLine of menuItem.recipe) {
+      const ingredientId = String(recipeLine.ingredientId);
+      const quantity = recipeLine.quantity * line.quantity;
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        throw new AppError("A menu item has an invalid ingredient recipe", 409, "INVALID_RECIPE");
+      }
+      const current = requiredById.get(ingredientId);
+      const totalQuantity = (current?.quantity ?? 0) + quantity;
+      if (!Number.isFinite(totalQuantity) || totalQuantity > Number.MAX_SAFE_INTEGER) {
+        throw new AppError("The required ingredient amount is too large", 409, "INVALID_RECIPE");
+      }
+      requiredById.set(ingredientId, {
+        ingredientId,
+        quantity: totalQuantity,
+      });
+    }
+  }
+  return [...requiredById.values()].sort((left, right) =>
+    left.ingredientId.localeCompare(right.ingredientId));
+}
 
 function getBilling(order) {
   if (
@@ -91,6 +122,7 @@ export function createOrderService({
   taxRoundingPolicy = "half_up",
   runInTransaction = defaultRunInTransaction,
   Payment,
+  Ingredient,
   notificationService,
 }) {
   return {
@@ -143,6 +175,8 @@ export function createOrderService({
         userId,
         lines,
         status: "pending",
+        inventoryReservationStatus: "none",
+        reservedIngredients: [],
         table: tableId ?? null,
         ...billing,
       };
@@ -229,12 +263,6 @@ export function createOrderService({
       if (!allowedRoles.includes(role)) {
         throw new AppError("You do not have permission for this order transition", 403, "FORBIDDEN");
       }
-      if (stockGatedTransitions.has(transition)) {
-        throw conflict(
-          "This order transition is disabled until inventory reservation, release, and consumption are implemented",
-          "STOCK_LIFECYCLE_NOT_READY",
-        );
-      }
 
       if (status === "cancelled" && Payment) {
         const activePayment = await Payment.findOne({
@@ -251,77 +279,271 @@ export function createOrderService({
         }
       }
 
-      if (status !== "cancelled") {
-        const order = await Order.findOneAndUpdate(
-          { _id: id, status: expectedStatus },
-          { $set: { status } },
-          { new: true, runValidators: true },
-        );
-        if (order) {
-          await notificationService?.statusChanged({
-            resourceType: "order",
-            resourceId: order._id,
-            ownerId: order.userId,
-            previousStatus: expectedStatus,
-            newStatus: status,
-          });
-          return serializeOrder(order);
+      if (transition === "pending:confirmed") {
+        if (!Ingredient) {
+          throw new AppError("Inventory is not configured for order confirmation", 503, "INVENTORY_NOT_CONFIGURED");
         }
-        return this.resolveStatusConflict(id);
-      }
+        const order = await runInTransaction(async (session) => {
+          const current = required(await inSession(Order.findById(id), session).lean());
+          if (current.status !== expectedStatus) {
+            throw conflict("Order status changed. Refresh and try again.");
+          }
+          const menuItems = await inSession(
+            MenuItem.find({
+              _id: { $in: (current.lines ?? []).map((line) => line.menuItemId) },
+            }),
+            session,
+          ).lean();
+          const requiredIngredients = getOrderIngredients(current, menuItems);
+          const ingredients = await inSession(
+            Ingredient.find({
+              _id: { $in: requiredIngredients.map(({ ingredientId }) => ingredientId) },
+              isActive: true,
+            }),
+            session,
+          ).lean();
+          const ingredientsById = new Map(ingredients.map((ingredient) => [
+            String(ingredient._id),
+            ingredient,
+          ]));
+          const reservation = [];
 
-      const existing = required(await Order.findById(id).lean());
-      if (existing.status !== expectedStatus) {
-        throw conflict("Order status changed. Refresh and try again.");
-      }
-      if (!existing.table) {
-        const order = await Order.findOneAndUpdate(
-          { _id: id, status: expectedStatus },
-          { $set: { status } },
-          { new: true, runValidators: true },
-        );
-        if (order) {
-          await notificationService?.statusChanged({
-            resourceType: "order",
-            resourceId: order._id,
-            ownerId: order.userId,
-            previousStatus: expectedStatus,
-            newStatus: status,
-          });
-          return serializeOrder(order);
-        }
-        return this.resolveStatusConflict(id);
-      }
+          for (const requirement of requiredIngredients) {
+            const ingredient = ingredientsById.get(requirement.ingredientId);
+            if (!ingredient) {
+              throw new AppError(
+                "A recipe ingredient is missing or inactive",
+                409,
+                "INVALID_RECIPE_INGREDIENT",
+              );
+            }
+            const available = ingredient.quantity - (ingredient.reservedQuantity ?? 0);
+            if (available < requirement.quantity) {
+              throw conflict(
+                `Not enough ${ingredient.name}: ${available} ${ingredient.unit} available, ${requirement.quantity} ${ingredient.unit} required`,
+                "INSUFFICIENT_INGREDIENT_STOCK",
+              );
+            }
+            const reserved = await Ingredient.findOneAndUpdate(
+              {
+                _id: requirement.ingredientId,
+                isActive: true,
+                $expr: {
+                  $gte: [
+                    {
+                      $subtract: [
+                        "$quantity",
+                        { $ifNull: ["$reservedQuantity", 0] },
+                      ],
+                    },
+                    requirement.quantity,
+                  ],
+                },
+              },
+              { $inc: { reservedQuantity: requirement.quantity } },
+              { new: true, runValidators: true, session },
+            );
+            if (!reserved) {
+              throw conflict(
+                `Not enough ${ingredient.name} is available for this order`,
+                "INSUFFICIENT_INGREDIENT_STOCK",
+              );
+            }
+            reservation.push({
+              ingredientId: reserved._id,
+              nameSnapshot: reserved.name,
+              quantity: requirement.quantity,
+              unit: reserved.unit,
+            });
+          }
 
-      const cancelledOrder = await runInTransaction(async (session) => {
-        const order = await Order.findOneAndUpdate(
-          { _id: id, status: expectedStatus },
-          { $set: { status } },
-          { new: true, runValidators: true, session },
-        );
-        if (!order) throw conflict("Order status changed. Refresh and try again.");
-
-        const table = await Table.findOneAndUpdate(
-          { _id: existing.table, activeOrderId: order._id, status: "occupied" },
-          { $set: { activeOrderId: null, status: "available" } },
-          { new: true, runValidators: true, session },
-        );
-        if (!table) {
-          throw conflict(
-            "Order cancellation could not release its table; the order was not changed",
-            "TABLE_ORDER_LINK_CONFLICT",
+          const updated = await Order.findOneAndUpdate(
+            { _id: id, status: expectedStatus },
+            {
+              $set: {
+                status,
+                inventoryReservationStatus: "reserved",
+                reservedIngredients: reservation,
+              },
+            },
+            { new: true, runValidators: true, session },
           );
+          if (!updated) throw conflict("Order status changed. Refresh and try again.");
+          return serializeOrder(updated);
+        });
+        await notificationService?.statusChanged({
+          resourceType: "order",
+          resourceId: order._id,
+          ownerId: order.userId,
+          previousStatus: expectedStatus,
+          newStatus: status,
+        });
+        return order;
+      }
+
+      if (transition === "confirmed:cancelled" || transition === "pending:cancelled") {
+        const order = await runInTransaction(async (session) => {
+          const current = required(await inSession(Order.findById(id), session).lean());
+          if (current.status !== expectedStatus) {
+            throw conflict("Order status changed. Refresh and try again.");
+          }
+          if (transition === "confirmed:cancelled") {
+            if (
+              !Ingredient ||
+              current.inventoryReservationStatus !== "reserved" ||
+              !current.reservedIngredients?.length
+            ) {
+              throw conflict(
+                "This confirmed order has no active ingredient reservation to release",
+                "ORDER_RESERVATION_MISSING",
+              );
+            }
+            for (const item of current.reservedIngredients) {
+              const released = await Ingredient.findOneAndUpdate(
+                {
+                  _id: item.ingredientId,
+                  $expr: {
+                    $gte: [
+                      { $ifNull: ["$reservedQuantity", 0] },
+                      item.quantity,
+                    ],
+                  },
+                },
+                { $inc: { reservedQuantity: -item.quantity } },
+                { new: true, runValidators: true, session },
+              );
+              if (!released) {
+                throw conflict(
+                  `Could not release the reserved stock for ${item.nameSnapshot}`,
+                  "ORDER_RESERVATION_CONFLICT",
+                );
+              }
+            }
+          }
+
+          const update = {
+            status,
+            ...(transition === "confirmed:cancelled"
+              ? { inventoryReservationStatus: "released", reservedIngredients: [] }
+              : {}),
+          };
+          const updated = await Order.findOneAndUpdate(
+            { _id: id, status: expectedStatus },
+            { $set: update },
+            { new: true, runValidators: true, session },
+          );
+          if (!updated) throw conflict("Order status changed. Refresh and try again.");
+
+          if (current.table) {
+            const table = await Table.findOneAndUpdate(
+              { _id: current.table, activeOrderId: updated._id, status: "occupied" },
+              { $set: { activeOrderId: null, status: "available" } },
+              { new: true, runValidators: true, session },
+            );
+            if (!table) {
+              throw conflict(
+                "Order cancellation could not release its table; the order was not changed",
+                "TABLE_ORDER_LINK_CONFLICT",
+              );
+            }
+          }
+          return serializeOrder(updated);
+        });
+        await notificationService?.statusChanged({
+          resourceType: "order",
+          resourceId: order._id,
+          ownerId: order.userId,
+          previousStatus: expectedStatus,
+          newStatus: status,
+        });
+        return order;
+      }
+
+      if (transition === "ready:completed") {
+        if (!Ingredient) {
+          throw new AppError("Inventory is not configured for order completion", 503, "INVENTORY_NOT_CONFIGURED");
         }
-        return serializeOrder(order);
-      });
-      await notificationService?.statusChanged({
-        resourceType: "order",
-        resourceId: cancelledOrder._id,
-        ownerId: cancelledOrder.userId,
-        previousStatus: expectedStatus,
-        newStatus: status,
-      });
-      return cancelledOrder;
+        const order = await runInTransaction(async (session) => {
+          const current = required(await inSession(Order.findById(id), session).lean());
+          if (current.status !== expectedStatus) {
+            throw conflict("Order status changed. Refresh and try again.");
+          }
+          if (
+            current.inventoryReservationStatus !== "reserved" ||
+            !current.reservedIngredients?.length
+          ) {
+            throw conflict(
+              "This order has no active ingredient reservation to consume",
+              "ORDER_RESERVATION_MISSING",
+            );
+          }
+          for (const item of current.reservedIngredients) {
+            const consumed = await Ingredient.findOneAndUpdate(
+              {
+                _id: item.ingredientId,
+                $expr: {
+                  $and: [
+                    { $gte: ["$quantity", item.quantity] },
+                    {
+                      $gte: [
+                        { $ifNull: ["$reservedQuantity", 0] },
+                        item.quantity,
+                      ],
+                    },
+                  ],
+                },
+              },
+              {
+                $inc: {
+                  quantity: -item.quantity,
+                  reservedQuantity: -item.quantity,
+                },
+              },
+              { new: true, runValidators: true, session },
+            );
+            if (!consumed) {
+              throw conflict(
+                `Could not consume the reserved stock for ${item.nameSnapshot}`,
+                "ORDER_RESERVATION_CONFLICT",
+              );
+            }
+          }
+          const updated = await Order.findOneAndUpdate(
+            { _id: id, status: expectedStatus },
+            { $set: { status, inventoryReservationStatus: "consumed" } },
+            { new: true, runValidators: true, session },
+          );
+          if (!updated) throw conflict("Order status changed. Refresh and try again.");
+          return serializeOrder(updated);
+        });
+        await notificationService?.statusChanged({
+          resourceType: "order",
+          resourceId: order._id,
+          ownerId: order.userId,
+          previousStatus: expectedStatus,
+          newStatus: status,
+        });
+        return order;
+      }
+
+      {
+        const order = await Order.findOneAndUpdate(
+          { _id: id, status: expectedStatus },
+          { $set: { status } },
+          { new: true, runValidators: true },
+        );
+        if (order) {
+          await notificationService?.statusChanged({
+            resourceType: "order",
+            resourceId: order._id,
+            ownerId: order.userId,
+            previousStatus: expectedStatus,
+            newStatus: status,
+          });
+          return serializeOrder(order);
+        }
+        return this.resolveStatusConflict(id);
+      }
     },
 
     async resolveStatusConflict(id) {

@@ -37,7 +37,25 @@ export function createCategoryService({ Category, MenuItem }) {
   };
 }
 
-export function createMenuItemService({ Category, MenuItem }) {
+export function createMenuItemService({ Category, MenuItem, Ingredient }) {
+  async function validateRecipe(recipe = []) {
+    const ingredientIds = recipe.map(({ ingredientId }) => ingredientId);
+    if (new Set(ingredientIds).size !== ingredientIds.length) {
+      throw new AppError("Each ingredient may appear only once in a recipe", 400, "DUPLICATE_RECIPE_INGREDIENT");
+    }
+    if (!recipe.length) return;
+    if (!Ingredient) {
+      throw new AppError("Inventory is not configured for recipes", 503, "INVENTORY_NOT_CONFIGURED");
+    }
+    const count = await Ingredient.countDocuments({
+      _id: { $in: ingredientIds },
+      isActive: true,
+    });
+    if (count !== ingredientIds.length) {
+      throw new AppError("One or more recipe ingredients are missing or inactive", 400, "INVALID_RECIPE_INGREDIENT");
+    }
+  }
+
   return {
     async list({ page, limit, search, categoryId }) {
       const filter = { isAvailable: true };
@@ -57,12 +75,14 @@ export function createMenuItemService({ Category, MenuItem }) {
       if (!(await Category.exists({ _id: fields.categoryId }))) {
         throw new AppError("Category not found", 400, "INVALID_CATEGORY");
       }
+      await validateRecipe(fields.recipe);
       return MenuItem.create({
         name: fields.name,
         description: fields.description ?? "",
         imageUrl: fields.imageUrl ?? "",
         categoryId: fields.categoryId,
         priceMinor: fields.priceMinor,
+        recipe: fields.recipe ?? [],
         isAvailable: true,
       });
     },
@@ -70,6 +90,7 @@ export function createMenuItemService({ Category, MenuItem }) {
       if (!(await Category.exists({ _id: fields.categoryId }))) {
         throw new AppError("Category not found", 400, "INVALID_CATEGORY");
       }
+      if (fields.recipe !== undefined) await validateRecipe(fields.recipe);
       const menuItem = await MenuItem.findByIdAndUpdate(
         id,
         {
@@ -79,6 +100,7 @@ export function createMenuItemService({ Category, MenuItem }) {
             categoryId: fields.categoryId,
             priceMinor: fields.priceMinor,
             isAvailable: fields.isAvailable,
+            ...(fields.recipe !== undefined ? { recipe: fields.recipe } : {}),
             ...(fields.imageUrl !== undefined ? { imageUrl: fields.imageUrl } : {}),
           },
         },

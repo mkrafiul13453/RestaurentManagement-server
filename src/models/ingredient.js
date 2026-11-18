@@ -12,6 +12,14 @@ const ingredientSchema = new mongoose.Schema(
       max: Number.MAX_SAFE_INTEGER,
       validate: Number.isFinite,
     },
+    reservedQuantity: {
+      type: Number,
+      required: true,
+      default: 0,
+      min: 0,
+      max: Number.MAX_SAFE_INTEGER,
+      validate: Number.isFinite,
+    },
     minimumStock: {
       type: Number,
       required: true,

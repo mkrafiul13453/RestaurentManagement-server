@@ -9,6 +9,7 @@ import { calculateOrderPricing } from "../src/services/pricing-service.js";
 
 const menuId = "000000000000000000000011";
 const tableId = "000000000000000000000022";
+const ingredientId = "000000000000000000000033";
 
 function createModels() {
   const menuItems = [{
@@ -16,8 +17,21 @@ function createModels() {
     name: "Rice bowl",
     priceMinor: 1501,
     isAvailable: true,
+    recipe: [{ ingredientId, quantity: 1 }],
   }];
   const orders = new Map();
+  const ingredients = new Map([[
+    ingredientId,
+    {
+      _id: ingredientId,
+      name: "Rice",
+      unit: "kg",
+      quantity: 100,
+      reservedQuantity: 0,
+      minimumStock: 5,
+      isActive: true,
+    },
+  ]]);
   const tables = new Map([[
     tableId,
     { _id: tableId, label: "T1", status: "available", activeOrderId: null },
@@ -35,6 +49,7 @@ function createModels() {
       },
       skip(value) { offset = value; return this; },
       limit(value) { pageLimit = value; return this; },
+      session() { return this; },
       async lean() {
         const value = await getValue();
         return Array.isArray(value)
@@ -56,6 +71,8 @@ function createModels() {
       const created = inputs.map((fields) => {
         const record = {
           ...fields,
+          inventoryReservationStatus: fields.inventoryReservationStatus ?? "none",
+          reservedIngredients: fields.reservedIngredients ?? [],
           _id: String(nextOrderId++).padStart(24, "0"),
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -82,8 +99,58 @@ function createModels() {
   const MenuItemModel = {
     find(filter) {
       return query(async () => menuItems.filter((item) =>
-        filter._id.$in.includes(item._id) && item.isAvailable === filter.isAvailable,
+        filter._id.$in.includes(item._id) &&
+        (filter.isAvailable === undefined || item.isAvailable === filter.isAvailable),
       ));
+    },
+  };
+
+  function matchesIngredient(record, filter) {
+    if (!record) return false;
+    if (filter._id && typeof filter._id !== "object" && record._id !== String(filter._id)) return false;
+    if (filter._id?.$in && !filter._id.$in.some((id) => String(id) === record._id)) return false;
+    if (filter.isActive !== undefined && record.isActive !== filter.isActive) return false;
+    if (!filter.$expr) return true;
+    function evaluate(expression) {
+      if (typeof expression === "string" && expression.startsWith("$")) {
+        return record[expression.slice(1)] ?? 0;
+      }
+      if (Array.isArray(expression)) return expression.map(evaluate);
+      if (expression && typeof expression === "object") {
+        if ("$ifNull" in expression) {
+          return evaluate(expression.$ifNull[0]) ?? evaluate(expression.$ifNull[1]);
+        }
+        if ("$subtract" in expression) {
+          const [left, right] = expression.$subtract.map(evaluate);
+          return left - right;
+        }
+        if ("$gte" in expression) {
+          const [left, right] = expression.$gte.map(evaluate);
+          return left >= right;
+        }
+        if ("$and" in expression) return expression.$and.every(evaluate);
+      }
+      return expression;
+    }
+    return evaluate(filter.$expr);
+  }
+  const IngredientModel = {
+    records: ingredients,
+    find(filter) {
+      return query(async () => [...ingredients.values()].filter((item) =>
+        matchesIngredient(item, filter),
+      ));
+    },
+    async findOneAndUpdate(filter, update) {
+      const ingredient = [...ingredients.values()].find((item) =>
+        matchesIngredient(item, filter),
+      );
+      if (!ingredient) return null;
+      for (const [field, amount] of Object.entries(update.$inc ?? {})) {
+        ingredient[field] = (ingredient[field] ?? 0) + amount;
+      }
+      Object.assign(ingredient, update.$set);
+      return copy(ingredient);
     },
   };
 
@@ -111,6 +178,7 @@ function createModels() {
     const transaction = transactionTail.then(async () => {
       const orderSnapshot = new Map([...orders].map(([key, value]) => [key, copy(value)]));
       const tableSnapshot = new Map([...tables].map(([key, value]) => [key, copy(value)]));
+      const ingredientSnapshot = new Map([...ingredients].map(([key, value]) => [key, copy(value)]));
       try {
         return await operation({});
       } catch (error) {
@@ -118,6 +186,8 @@ function createModels() {
         for (const [key, value] of orderSnapshot) orders.set(key, value);
         tables.clear();
         for (const [key, value] of tableSnapshot) tables.set(key, value);
+        ingredients.clear();
+        for (const [key, value] of ingredientSnapshot) ingredients.set(key, value);
         throw error;
       }
     });
@@ -128,7 +198,10 @@ function createModels() {
   return {
     Order: OrderModel,
     MenuItem: MenuItemModel,
+    Ingredient: IngredientModel,
     Table: TableModel,
+    menuItems,
+    ingredients,
     orders,
     tables,
     runInTransaction,
@@ -395,7 +468,7 @@ test("order lists paginate and legacy order documents remain readable without fa
   });
 });
 
-test("status lifecycle authorizes transitions and gates inventory-dependent changes", async () => {
+test("status lifecycle authorizes transitions and reserves, releases, and consumes recipe stock", async () => {
   const models = createModels();
   await withServer(createTestApp(models), async (baseUrl) => {
     const createdResponse = await postOrder(baseUrl);
@@ -411,9 +484,20 @@ test("status lifecycle authorizes transitions and gates inventory-dependent chan
 
     assert.equal((await patch("chef", "pending", "confirmed")).status, 403);
     const confirmation = await patch("waiter", "pending", "confirmed");
-    assert.equal(confirmation.status, 409);
-    assert.equal((await confirmation.json()).error.code, "STOCK_LIFECYCLE_NOT_READY");
+    assert.equal(confirmation.status, 200, await confirmation.clone().text());
+    assert.equal(models.ingredients.get(ingredientId).reservedQuantity, 2);
     assert.equal((await patch("waiter", "pending", "ready")).status, 409);
+
+    const confirmedCancellation = await fetch(
+      `${baseUrl}/api/v1/orders/${order._id}/status`,
+      {
+        method: "PATCH",
+        headers: jsonHeaders("manager"),
+        body: JSON.stringify({ expectedStatus: "confirmed", status: "cancelled" }),
+      },
+    );
+    assert.equal(confirmedCancellation.status, 200);
+    assert.equal(models.ingredients.get(ingredientId).reservedQuantity, 0);
 
     const cancelledOrder = (await (await postOrder(baseUrl)).json()).data.order;
     const cancelRequest = (role) => fetch(
@@ -441,7 +525,14 @@ test("status lifecycle authorizes transitions and gates inventory-dependent chan
     assert.equal(repeated.status, 409);
 
     const confirmedOrder = (await (await postOrder(baseUrl)).json()).data.order;
-    models.orders.get(confirmedOrder._id).status = "confirmed";
+    assert.equal((await fetch(
+      `${baseUrl}/api/v1/orders/${confirmedOrder._id}/status`,
+      {
+        method: "PATCH",
+        headers: jsonHeaders("waiter"),
+        body: JSON.stringify({ expectedStatus: "pending", status: "confirmed" }),
+      },
+    )).status, 200);
     const startPreparation = await fetch(
       `${baseUrl}/api/v1/orders/${confirmedOrder._id}/status`,
       {
@@ -450,10 +541,8 @@ test("status lifecycle authorizes transitions and gates inventory-dependent chan
         body: JSON.stringify({ expectedStatus: "confirmed", status: "preparing" }),
       },
     );
-    assert.equal(startPreparation.status, 409);
-    assert.equal((await startPreparation.json()).error.code, "STOCK_LIFECYCLE_NOT_READY");
+    assert.equal(startPreparation.status, 200);
 
-    models.orders.get(confirmedOrder._id).status = "preparing";
     assert.equal((await fetch(
       `${baseUrl}/api/v1/orders/${confirmedOrder._id}/status`,
       {
@@ -470,8 +559,65 @@ test("status lifecycle authorizes transitions and gates inventory-dependent chan
         body: JSON.stringify({ expectedStatus: "ready", status: "completed" }),
       },
     );
-    assert.equal(completion.status, 409);
-    assert.equal((await completion.json()).error.code, "STOCK_LIFECYCLE_NOT_READY");
+    assert.equal(completion.status, 200);
+    assert.equal(models.ingredients.get(ingredientId).quantity, 98);
+    assert.equal(models.ingredients.get(ingredientId).reservedQuantity, 0);
+  });
+});
+
+test("order confirmation rejects missing recipes and insufficient ingredient stock atomically", async () => {
+  const missingRecipeModels = createModels();
+  missingRecipeModels.menuItems[0].recipe = [];
+  await withServer(createTestApp(missingRecipeModels), async (baseUrl) => {
+    const order = (await (await postOrder(baseUrl)).json()).data.order;
+    const response = await fetch(`${baseUrl}/api/v1/orders/${order._id}/status`, {
+      method: "PATCH",
+      headers: jsonHeaders("manager"),
+      body: JSON.stringify({ expectedStatus: "pending", status: "confirmed" }),
+    });
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).error.code, "RECIPE_NOT_CONFIGURED");
+    assert.equal(missingRecipeModels.orders.get(order._id).status, "pending");
+  });
+
+  const insufficientModels = createModels();
+  insufficientModels.ingredients.get(ingredientId).quantity = 1;
+  await withServer(createTestApp(insufficientModels), async (baseUrl) => {
+    const order = (await (await postOrder(baseUrl)).json()).data.order;
+    const response = await fetch(`${baseUrl}/api/v1/orders/${order._id}/status`, {
+      method: "PATCH",
+      headers: jsonHeaders("manager"),
+      body: JSON.stringify({ expectedStatus: "pending", status: "confirmed" }),
+    });
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).error.code, "INSUFFICIENT_INGREDIENT_STOCK");
+    assert.equal(insufficientModels.ingredients.get(ingredientId).reservedQuantity, 0);
+    assert.equal(insufficientModels.orders.get(order._id).status, "pending");
+  });
+
+  const concurrentModels = createModels();
+  concurrentModels.ingredients.get(ingredientId).quantity = 2;
+  await withServer(createTestApp(concurrentModels), async (baseUrl) => {
+    const orders = await Promise.all([
+      postOrder(baseUrl),
+      postOrder(baseUrl),
+    ]);
+    const orderIds = await Promise.all(orders.map(async (response) =>
+      (await response.json()).data.order._id));
+    const confirmations = await Promise.all(orderIds.map((id) => fetch(
+      `${baseUrl}/api/v1/orders/${id}/status`,
+      {
+        method: "PATCH",
+        headers: jsonHeaders("waiter"),
+        body: JSON.stringify({ expectedStatus: "pending", status: "confirmed" }),
+      },
+    )));
+    assert.deepEqual(confirmations.map((response) => response.status).sort(), [200, 409]);
+    assert.equal(concurrentModels.ingredients.get(ingredientId).reservedQuantity, 2);
+    assert.equal(
+      [...concurrentModels.orders.values()].filter((order) => order.status === "confirmed").length,
+      1,
+    );
   });
 });
 
